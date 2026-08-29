@@ -34,7 +34,9 @@ backend/.venv/
 *.egg-info/
 .pytest_cache/
 .coverage
-
+backend/uv.lock
+backend/pyproject.toml
+backend/.python-version
 # ==========================================
 # Database & Local Storage
 # ==========================================
