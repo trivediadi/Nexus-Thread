@@ -8,6 +8,7 @@ from app.core.database import Base
 
 if TYPE_CHECKING:
     from app.models.post import PostModel
+    from app.models.comment import CommentModel
 
 class UserModel(Base):
     __tablename__="users"
@@ -24,3 +25,4 @@ class UserModel(Base):
     created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now(),nullable=False)
     updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),server_default=func.now(),onupdate=func.now(),nullable=False)
     posts:Mapped[list["PostModel"]]=relationship("PostModel",back_populates="author",cascade="all, delete-orphan")
+    comments:Mapped[list["CommentModel"]]=relationship("CommentModel",back_populates="author",cascade="all, delete-orphan")
