@@ -40,3 +40,31 @@ async def get_all_posts(db:AsyncSession=Depends(get_db),skip:int=0,limit:int=20)
     )
     result= await db.execute(query)
     return result.scalars().all()
+
+@post_routes.patch("/{post_id}",response_model=PostResponseSchema,status_code=status.HTTP_200_OK)
+async def update_post(post_id:int,body:PostCreateSchema,db:AsyncSession=Depends(get_db),user:UserModel=Depends(deps.is_authenticate)):
+    query=select(PostModel).options(selectinload(PostModel.author)).where(PostModel.id==post_id)
+    result=await db.execute(query)
+    post=result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Post not Found")
+    if post.user_id!=user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not authorized to edit this post")
+    post.title=body.title
+    post.content=body.content
+    await db.commit()
+    await db.refresh(post)
+    return post
+
+@post_routes.delete("/{post_id}",status_code=status.HTTP_200_OK)
+async def delete_post(post_id:int,db:AsyncSession=Depends(get_db),user:UserModel=Depends(deps.is_authenticate)):
+    query=select(PostModel).where(PostModel.id==post_id)
+    result=await db.execute(query)
+    post=result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Post not found")
+    if post.user_id!=user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not authorized to delete")
+    await db.delete(post)
+    await db.commit()
+    return None
