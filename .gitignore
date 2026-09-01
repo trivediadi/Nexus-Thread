@@ -37,6 +37,8 @@ backend/.venv/
 backend/uv.lock
 backend/pyproject.toml
 backend/.python-version
+backend/migrations
+backend/alembic.ini
 # ==========================================
 # Database & Local Storage
 # ==========================================
