@@ -7,6 +7,8 @@ from app.models.comment import CommentModel
 from app.models.post import PostModel
 from app.models.user import UserModel
 from app.schemas.comment import CommentUpdateSchema,CommentCreateSchema,CommentResponseSchema
+from app.models.vote import CommentVoteModel
+from app.schemas.vote import VoteCreateSchema
 from app.core.database import get_db
 from app.api import deps
 
@@ -109,3 +111,34 @@ async def delete_comment(post_id:int,comment_id:int,db:AsyncSession=Depends(get_
     await db.delete(comment)
     await db.commit()
     return None
+
+@comment_routes.post("/{comment_id}/vote",status_code=status.HTTP_200_OK)
+async def vote_comment(post_id:int,comment_id:int,body:VoteCreateSchema,db:AsyncSession=Depends(get_db),user:UserModel=Depends(deps.is_authenticate)):
+    comment_query=select(CommentModel).where(CommentModel.id==comment_id,CommentModel.post_id==post_id)
+    comment=(await db.execute(comment_query)).scalar_one_or_none()
+    if not comment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Comment not found on this post")
+    
+    vote_query=select(CommentVoteModel).where(CommentVoteModel.comment_id==comment_id,CommentVoteModel.user_id==user.id)
+    found_vote=(await db.execute(vote_query)).scalar_one_or_none()
+    
+    if body.dir==1 or body.dir==-1:
+        if not found_vote:
+            new_vote=CommentVoteModel(user_id=user.id,comment_id=comment_id,dir=body.dir)
+            db.add(new_vote)
+            comment.score+=body.dir
+            message="vote added"
+        else:
+            if found_vote.dir==body.dir:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT,detail="You have already voted")
+            comment.score +=(body.dir -found_vote.dir)
+            found_vote.dir=body.dir
+            message="Vote updated"
+    else:
+        if not found_vote:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Vote does not exist")
+        comment.score-=found_vote.dir
+        await db.delete(found_vote)
+        message="Vote removed"
+    await db.commit()
+    return {"message":message,"new_score":comment.score}
