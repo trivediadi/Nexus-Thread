@@ -1,13 +1,15 @@
 from fastapi import APIRouter,Depends,status,HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select,or_
 from sqlalchemy.orm import selectinload
-
+from typing import Literal
 
 from app.api import deps
 from app.models.user import UserModel
 from app.models.post import PostModel
 from app.schemas.post import PostCreateSchema,PostResponseSchema
+from app.models.vote import PostVoteModel
+from app.schemas.vote import VoteCreateSchema
 from app.core.database import get_db
 
 post_routes=APIRouter(prefix="/posts",tags=["Posts"])
@@ -34,10 +36,23 @@ async def get_user_submitted_posts(username:str,db:AsyncSession=Depends(get_db))
     return posts
 
 @post_routes.get("/",response_model=list[PostResponseSchema],status_code=status.HTTP_200_OK)
-async def get_all_posts(db:AsyncSession=Depends(get_db),skip:int=0,limit:int=20):
+async def get_all_posts(db:AsyncSession=Depends(get_db),skip:int=0,limit:int=20,sort_by:Literal["new","top","hot"]="new",search:str|None= None,user_id:int|None=None):
     query=(
-        select(PostModel).options(selectinload(PostModel.author)).order_by(PostModel.created_at.desc()).offset(skip).limit(limit)
+        select(PostModel).options(selectinload(PostModel.author))
     )
+    if user_id is not None:
+        query=query.where(PostModel.user_id==user_id)
+    if search:
+        query=query.where(or_(PostModel.title.ilike(f"{search}%"),PostModel.content.ilike(f"{search}%")))
+    if sort_by == "top":
+        # Highest score of all time
+        query = query.order_by(PostModel.score.desc())    
+    elif sort_by == "hot":
+        # Basic Hot algorithm: High score, but newer posts break ties
+        query = query.order_by(PostModel.score.desc(), PostModel.created_at.desc())
+    else:
+        query = query.order_by(PostModel.created_at.desc())
+    query=query.offset(skip).limit(limit)
     result= await db.execute(query)
     return result.scalars().all()
 
@@ -68,3 +83,39 @@ async def delete_post(post_id:int,db:AsyncSession=Depends(get_db),user:UserModel
     await db.delete(post)
     await db.commit()
     return None
+
+
+@post_routes.post("/{post_id}/vote",status_code=status.HTTP_200_OK)
+async def vote_post(post_id:int,body:VoteCreateSchema,db:AsyncSession=Depends(get_db),user:UserModel=Depends(deps.is_authenticate)):
+    post_query=select(PostModel).where(PostModel.id==post_id)
+    post=(await db.execute(post_query)).scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Post not found")
+    vote_query=select(PostVoteModel).where(
+        PostVoteModel.post_id==post_id,
+        PostVoteModel.user_id==user.id
+    )
+    found_vote=(await db.execute(vote_query)).scalar_one_or_none()
+    if body.dir==1 or body.dir==-1:
+        if not found_vote:
+            new_vote=PostVoteModel(user_id=user.id,post_id=post_id,dir=body.dir)
+            db.add(new_vote)
+            post.score+=body.dir
+            message="Vote added"
+        else:
+            if found_vote.dir==body.dir:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT,detail="You have already voted in this direction")
+            post.score+=(body.dir-found_vote.dir)
+            found_vote.dir=body.dir
+            message="Vote updated"
+    else:
+        if not found_vote:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Vote does not exist")
+        post.score-= found_vote.dir
+        await db.delete(found_vote)
+        message="Vote removed"
+    await db.commit()
+    return{
+        "message":message,"new_score":post.score
+    }
+
